@@ -1,25 +1,25 @@
-#include <nani2203-project-1_inferencing.h>
-
 #include <WiFi.h>
 #include <esp_now.h>
 #include <nani2203-project-1_inferencing.h>
 
+// -------- CONFIG --------
 #define MAX_SAMPLES (EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE / 6)
 
+// -------- DATA STRUCTURE --------
 struct SensorData {
   int node_id;
   float ax, ay, az;
   float gx, gy, gz;
 };
 
-// Buffers
+// -------- BUFFERS --------
 float buffer1[EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE];
 float buffer2[EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE];
 
 int index1 = 0;
 int index2 = 0;
 
-// 🔥 TinyML inference
+// -------- INFERENCE FUNCTION --------
 void runInference(float *buffer, int node_id) {
 
   signal_t signal;
@@ -28,35 +28,84 @@ void runInference(float *buffer, int node_id) {
   ei_impulse_result_t result;
   run_classifier(&signal, &result, false);
 
-  Serial.print("\nNode ");
-  Serial.print(node_id);
-  Serial.println(" Prediction:");
-
   float maxVal = 0;
   String label = "";
 
+  // Find highest confidence label
   for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
-    Serial.print(result.classification[i].label);
-    Serial.print(": ");
-    Serial.println(result.classification[i].value);
-
     if (result.classification[i].value > maxVal) {
       maxVal = result.classification[i].value;
       label = result.classification[i].label;
     }
   }
 
-  Serial.print("👉 Final: ");
-  Serial.println(label);
-  Serial.println("------------------");
+  // -------- JSON OUTPUT (VERY IMPORTANT) --------
+  Serial.print("{");
+
+  Serial.print("\"node\":");
+  Serial.print(node_id);
+  Serial.print(",");
+
+  Serial.print("\"label\":\"");
+  Serial.print(label);
+  Serial.print("\",");
+
+  Serial.print("\"confidence\":");
+  Serial.print(maxVal, 4);
+  Serial.print(",");
+
+  // Send latest sensor values (last sample)
+  int last = (MAX_SAMPLES - 1) * 6;
+
+  Serial.print("\"ax\":");
+  Serial.print(buffer[last + 0], 4);
+  Serial.print(",");
+
+  Serial.print("\"ay\":");
+  Serial.print(buffer[last + 1], 4);
+  Serial.print(",");
+
+  Serial.print("\"az\":");
+  Serial.print(buffer[last + 2], 4);
+  Serial.print(",");
+
+  Serial.print("\"gx\":");
+  Serial.print(buffer[last + 3], 4);
+  Serial.print(",");
+
+  Serial.print("\"gy\":");
+  Serial.print(buffer[last + 4], 4);
+  Serial.print(",");
+
+  Serial.print("\"gz\":");
+  Serial.print(buffer[last + 5], 4);
+  Serial.print(",");
+
+  // Timestamp (ms)
+  Serial.print("\"time\":");
+  Serial.print(millis());
+
+  Serial.println("}");
+
+  // -------- DEBUG PRINT --------
+  Serial.print("Node ");
+  Serial.print(node_id);
+  Serial.print(" → ");
+  Serial.print(label);
+  Serial.print(" (");
+  Serial.print(maxVal);
+  Serial.println(")");
 }
 
-// ✅ FIXED CALLBACK (NEW ESP32 VERSION)
+// -------- ESP-NOW CALLBACK --------
 void onReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
+
+  if (len != sizeof(SensorData)) return;
 
   SensorData data;
   memcpy(&data, incomingData, sizeof(data));
 
+  // -------- NODE 1 --------
   if (data.node_id == 1) {
 
     buffer1[index1 * 6 + 0] = data.ax;
@@ -74,6 +123,7 @@ void onReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, int
     }
   }
 
+  // -------- NODE 2 --------
   else if (data.node_id == 2) {
 
     buffer2[index2 * 6 + 0] = data.ax;
@@ -92,13 +142,16 @@ void onReceive(const esp_now_recv_info_t *info, const uint8_t *incomingData, int
   }
 }
 
+// -------- SETUP --------
 void setup() {
   Serial.begin(115200);
 
   WiFi.mode(WIFI_STA);
 
+  Serial.println("Initializing ESP-NOW...");
+
   if (esp_now_init() != ESP_OK) {
-    Serial.println("ESP-NOW Init Failed");
+    Serial.println("❌ ESP-NOW Init Failed");
     return;
   }
 
@@ -107,4 +160,7 @@ void setup() {
   Serial.println("🔥 Master TinyML Ready");
 }
 
-void loop() {}
+// -------- LOOP --------
+void loop() {
+  // Nothing needed (event-based system)
+}

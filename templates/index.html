@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Vibration Dashboard - Frequency Domain</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Segoe UI, sans-serif;
+            background: #111827;
+            color: #f8fafc;
+            margin: 20px;
+        }
+
+        h2 {
+            margin-bottom: 16px;
+        }
+
+        .status-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .status {
+            background: #1f2937;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-weight: 700;
+            margin-top: 6px;
+        }
+
+        .normal { background: #16a34a; }
+        .critical { background: #dc2626; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .card {
+            background: #1f2937;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .debug {
+            margin-top: 16px;
+            background: #0b1220;
+            color: #22c55e;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: Consolas, monospace;
+            font-size: 12px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h2>Vibration Dashboard</h2>
+    <div>Build: {{ build }}</div>
+
+    <div class="status-row">
+        <div class="status">
+            <div>Node 1</div>
+            <div id="s1" class="badge normal">INIT</div>
+            <div id="meta1"></div>
+        </div>
+        <div class="status">
+            <div>Node 2</div>
+            <div id="s2" class="badge normal">INIT</div>
+            <div id="meta2"></div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Node 1 Time Domain (AZ)</h3>
+            <canvas id="chart1"></canvas>
+        </div>
+        <div class="card">
+            <h3>Node 1 Frequency Domain</h3>
+            <canvas id="fft1"></canvas>
+        </div>
+        <div class="card">
+            <h3>Node 2 Time Domain (AZ)</h3>
+            <canvas id="chart2"></canvas>
+        </div>
+        <div class="card">
+            <h3>Node 2 Frequency Domain</h3>
+            <canvas id="fft2"></canvas>
+        </div>
+    </div>
+
+    <div id="debug" class="debug">Connecting...</div>
+
+    <script>
+        const debugEl = document.getElementById("debug");
+        function log(msg) {
+            const t = new Date().toLocaleTimeString();
+            debugEl.innerHTML = `[${t}] ${msg}<br>` + debugEl.innerHTML;
+        }
+
+        function createLine(id, color, label) {
+            return new Chart(document.getElementById(id), {
+                type: "line",
+                data: { labels: [], datasets: [{ label, data: [], borderColor: color, borderWidth: 2, pointRadius: 0 }] },
+                options: { animation: false, responsive: true, scales: { y: { beginAtZero: false } } }
+            });
+        }
+
+        function createBar(id, color, label) {
+            return new Chart(document.getElementById(id), {
+                type: "bar",
+                data: { labels: [], datasets: [{ label, data: [], backgroundColor: color }] },
+                options: { animation: false, responsive: true, scales: { y: { beginAtZero: true } } }
+            });
+        }
+
+        function dftMagnitude(values) {
+            const N = values.length;
+            if (N < 2) return [];
+
+            // Remove DC and apply Hann window so non-zero frequency bins are visible.
+            let mean = 0;
+            for (let i = 0; i < N; i++) mean += values[i];
+            mean /= N;
+
+            const win = new Array(N);
+            for (let n = 0; n < N; n++) {
+                const hann = 0.5 * (1 - Math.cos((2 * Math.PI * n) / (N - 1)));
+                win[n] = (values[n] - mean) * hann;
+            }
+
+            const out = [];
+            for (let k = 0; k < Math.floor(N / 2); k++) {
+                let re = 0;
+                let im = 0;
+                for (let n = 0; n < N; n++) {
+                    const ang = (2 * Math.PI * k * n) / N;
+                    re += win[n] * Math.cos(ang);
+                    im -= win[n] * Math.sin(ang);
+                }
+                out.push(Math.sqrt(re * re + im * im) / N);
+            }
+            return out;
+        }
+
+        const chart1 = createLine("chart1", "#38bdf8", "Node 1 AZ");
+        const chart2 = createLine("chart2", "#fb7185", "Node 2 AZ");
+        const fft1 = createBar("fft1", "rgba(56,189,248,0.7)", "Node 1 Spectrum");
+        const fft2 = createBar("fft2", "rgba(251,113,133,0.7)", "Node 2 Spectrum");
+
+        const n1 = [];
+        const n2 = [];
+        const MAX_TIME = 80;
+        const FFT_WINDOW = 64;
+
+        log("Initializing Socket.IO");
+        if (window.location.protocol === "file:") {
+            window.location.href = "http://127.0.0.1:5000/";
+        }
+
+        const socketServerUrl = window.location.protocol === "file:"
+            ? "http://127.0.0.1:5000"
+            : window.location.origin;
+
+        const socket = io(socketServerUrl, {
+            path: "/socket.io",
+            // Werkzeug + threading mode is stable with polling transport.
+            transports: ["polling"],
+            upgrade: false,
+            reconnection: true
+        });
+
+        socket.on("connect", () => log("Connected"));
+        socket.on("disconnect", (r) => log(`Disconnected: ${r}`));
+        socket.on("connect_error", (e) => log(`Connection Error: ${e.message || e}`));
+        socket.on("server_status", (msg) => log(`Server: ${msg.message}`));
+
+        socket.on("sensor_data", (raw) => {
+            const node = Number(raw.node);
+            const az = Number(raw.az);
+            const label = String(raw.label || "unknown");
+            if (!Number.isFinite(az) || (node !== 1 && node !== 2)) {
+                return;
+            }
+
+            const is1 = node === 1;
+            const arr = is1 ? n1 : n2;
+            const tChart = is1 ? chart1 : chart2;
+            const fChart = is1 ? fft1 : fft2;
+            const badge = document.getElementById(is1 ? "s1" : "s2");
+            const meta = document.getElementById(is1 ? "meta1" : "meta2");
+
+            arr.push(az);
+            if (arr.length > 256) arr.shift();
+
+            tChart.data.labels.push("");
+            tChart.data.datasets[0].data.push(az);
+            if (tChart.data.labels.length > MAX_TIME) {
+                tChart.data.labels.shift();
+                tChart.data.datasets[0].data.shift();
+            }
+            tChart.update();
+
+            if (arr.length >= FFT_WINDOW) {
+                const windowed = arr.slice(arr.length - FFT_WINDOW);
+                // Drop bin 0 (DC), then scale so low-level vibration becomes visible.
+                const spectrum = dftMagnitude(windowed).slice(1, 33).map(v => v * 50);
+                fChart.data.labels = spectrum.map((_, i) => `Bin ${i + 1}`);
+                fChart.data.datasets[0].data = spectrum;
+                fChart.update();
+            }
+
+            badge.textContent = label.toUpperCase();
+            badge.className = `badge ${label === "critical" || label === "structure_fail" ? "critical" : "normal"}`;
+            meta.textContent = `AZ=${az.toFixed(4)}  confidence=${Number(raw.confidence || 0).toFixed(4)}  t=${raw.time}`;
+        });
+    </script>
+</body>
+</html>

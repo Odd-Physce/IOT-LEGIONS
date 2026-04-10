@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Robot Direction Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --sand: #fff8ed;
+      --ink: #1f1a17;
+      --sunset: #ff6b35;
+      --teal: #0f8b8d;
+      --sky: #7ec8e3;
+      --card: rgba(255, 255, 255, 0.72);
+      --border: rgba(31, 26, 23, 0.18);
+      --shadow: 0 12px 30px rgba(31, 26, 23, 0.16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Space Grotesk", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 20%, #fff7b8 0%, transparent 30%),
+        radial-gradient(circle at 80% 15%, #b8f0ff 0%, transparent 28%),
+        radial-gradient(circle at 70% 85%, #ffc8b5 0%, transparent 30%),
+        linear-gradient(135deg, #fff8ed 0%, #ffe7d6 45%, #dff5ff 100%);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+
+    .panel {
+      width: min(920px, 100%);
+      border-radius: 24px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      padding: 28px;
+      animation: rise-in 650ms ease both;
+    }
+
+    .title {
+      margin: 0;
+      font-size: clamp(1.5rem, 2vw + 1rem, 2.3rem);
+      letter-spacing: 0.02em;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin-top: 8px;
+      margin-bottom: 20px;
+      color: rgba(31, 26, 23, 0.74);
+      font-size: 0.96rem;
+    }
+
+    .controls {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.78);
+      animation: rise-in 850ms ease both;
+      max-width: 360px;
+      margin-inline: auto;
+    }
+
+    .pad {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      max-width: 320px;
+      margin-inline: auto;
+      margin-top: 10px;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 14px;
+      min-height: 64px;
+      background: linear-gradient(135deg, #ffffff, #f6f5f2);
+      color: var(--ink);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 8px 14px rgba(31, 26, 23, 0.12);
+      transition: transform 120ms ease, box-shadow 200ms ease, background 200ms ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 18px rgba(31, 26, 23, 0.16);
+    }
+
+    .btn:active,
+    .btn.active {
+      transform: translateY(1px) scale(0.98);
+      background: linear-gradient(135deg, #ffe0d3, #fff2b4);
+      box-shadow: inset 0 2px 6px rgba(31, 26, 23, 0.2);
+    }
+
+    .btn.forward { border-bottom: 4px solid var(--sunset); }
+    .btn.back { border-bottom: 4px solid var(--teal); }
+    .btn.left,
+    .btn.right { border-bottom: 4px solid var(--sky); }
+
+    .ghost {
+      visibility: hidden;
+    }
+
+    @keyframes rise-in {
+      from {
+        opacity: 0;
+        transform: translateY(14px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 780px) {
+      .panel {
+        padding: 20px;
+      }
+
+      .btn {
+        min-height: 58px;
+      }
+
+      .subtitle {
+        font-size: 0.9rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="panel">
+    <h1 class="title">Robot Direction Control</h1>
+    <p class="subtitle">Only movement commands: W/A/S/D or the four buttons.</p>
+
+    <section class="controls">
+      <div class="pad">
+        <div class="ghost" aria-hidden="true"></div>
+        <button class="btn forward" data-command="forward">Forward</button>
+        <div class="ghost" aria-hidden="true"></div>
+
+        <button class="btn left" data-command="left">Left</button>
+        <div class="ghost" aria-hidden="true"></div>
+        <button class="btn right" data-command="right">Right</button>
+
+        <div class="ghost" aria-hidden="true"></div>
+        <button class="btn back" data-command="back">Back</button>
+        <div class="ghost" aria-hidden="true"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const buttons = Array.from(document.querySelectorAll(".btn[data-command]"));
+
+    async function sendCommand(command) {
+      try {
+        await fetch("/api/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command }),
+        });
+      } catch (err) {}
+    }
+
+    function pulse(command) {
+      const btn = buttons.find((el) => el.dataset.command === command);
+      if (!btn) return;
+      btn.classList.add("active");
+      window.setTimeout(() => btn.classList.remove("active"), 160);
+    }
+
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const command = btn.dataset.command;
+        pulse(command);
+        sendCommand(command);
+      });
+    });
+
+    const keyMap = {
+      w: "forward",
+      a: "left",
+      s: "back",
+      d: "right",
+    };
+
+    window.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      const command = keyMap[key];
+      if (!command || event.repeat) return;
+      event.preventDefault();
+      pulse(command);
+      sendCommand(command);
+    });
+  </script>
+</body>
+</html>
